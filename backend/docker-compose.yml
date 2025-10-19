@@ -1,0 +1,91 @@
+# Docker Compose pour le backend FastAPI avec PostgreSQL
+version: '3.8'
+
+services:
+  # Base de données PostgreSQL
+  postgres:
+    image: postgres:15-alpine
+    container_name: saas_ideas_postgres
+    environment:
+      POSTGRES_DB: saas_ideas
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./app/db_schema.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - saas_ideas_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Backend FastAPI
+  backend:
+    build: .
+    container_name: saas_ideas_backend
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/saas_ideas
+      - ENVIRONMENT=production
+      - HOST=0.0.0.0
+      - PORT=8000
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - saas_ideas_network
+    volumes:
+      - ./app:/app/app:ro  # Mount en lecture seule pour le développement
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Redis pour le cache et les sessions (optionnel)
+  redis:
+    image: redis:7-alpine
+    container_name: saas_ideas_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - saas_ideas_network
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+
+  # Nginx pour le reverse proxy (optionnel, pour la production)
+  nginx:
+    image: nginx:alpine
+    container_name: saas_ideas_nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro  # Certificats SSL si nécessaire
+    depends_on:
+      - backend
+    networks:
+      - saas_ideas_network
+    restart: unless-stopped
+    profiles:
+      - production  # Service optionnel, activé avec --profile production
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  saas_ideas_network:
+    driver: bridge
